@@ -18,13 +18,12 @@ pub fn unix_now() -> i64 {
 #[derive(Debug, Clone)]
 pub struct NowPlaying {
     pub origin: String,
+    pub origin_url: Option<String>,
     pub artist: String,
     pub title: String,
     pub album: Option<String>,
     pub duration: Option<i64>,
     pub started_at: i64,
-    pub state: String,
-    pub position_frozen: Option<i64>,
     pub updated_at: i64,
 }
 
@@ -36,6 +35,7 @@ pub struct ListenRow {
     pub album: Option<String>,
     pub duration: Option<i64>,
     pub origin: String,
+    pub origin_url: Option<String>,
 }
 
 pub struct State {
@@ -53,42 +53,31 @@ impl State {
 
     pub fn set_now_playing(&mut self, listen: &Listen, now: i64) {
         let origin = listen.origin();
-        let artist = listen.track_metadata.artist_name.as_string();
+        let artist = listen.track_metadata.artist_name.clone();
         let title = listen.track_metadata.track_name.clone();
         let album = listen.track_metadata.release_name.clone();
-        let duration = listen.track_metadata.additional_info.duration;
-        let playing = listen.is_playing();
+        let duration = listen.track_metadata.additional_info.duration_seconds();
 
         let same_track = self.now_playing.as_ref().is_some_and(|np| {
             np.origin == origin && np.artist == artist && np.title == title
         });
 
         if same_track {
-            if let Some(np) = self.now_playing.as_mut() {
-                if playing {
-                    if np.state == "paused" {
-                        let frozen = np.position_frozen.unwrap_or(0).max(0);
-                        np.started_at = now - frozen;
-                        np.position_frozen = None;
-                        np.state = "playing".to_string();
-                    }
-                    np.updated_at = now;
-                } else if np.state == "playing" {
-                    np.position_frozen = Some((now - np.started_at).max(0));
-                    np.state = "paused".to_string();
-                    np.updated_at = now;
-                }
-            }
+            let np = self.now_playing.as_mut().unwrap();
+            np.origin_url
+                .clone_from(&listen.track_metadata.additional_info.origin_url);
+            np.album.clone_from(&listen.track_metadata.release_name);
+            np.duration = listen.track_metadata.additional_info.duration_seconds();
+            np.updated_at = now;
         } else {
             self.now_playing = Some(NowPlaying {
                 origin,
+                origin_url: listen.track_metadata.additional_info.origin_url.clone(),
                 artist,
                 title,
                 album,
                 duration,
                 started_at: now,
-                state: if playing { "playing" } else { "paused" }.to_string(),
-                position_frozen: if playing { None } else { Some(0) },
                 updated_at: now,
             });
         }
@@ -97,11 +86,12 @@ impl State {
     pub fn insert_listen(&mut self, listen: &Listen, now: i64) {
         let row = ListenRow {
             listened_at: listen.listened_at.unwrap_or(now),
-            artist: listen.track_metadata.artist_name.as_string(),
+            artist: listen.track_metadata.artist_name.clone(),
             title: listen.track_metadata.track_name.clone(),
             album: listen.track_metadata.release_name.clone(),
-            duration: listen.track_metadata.additional_info.duration,
+            duration: listen.track_metadata.additional_info.duration_seconds(),
             origin: listen.origin(),
+            origin_url: listen.track_metadata.additional_info.origin_url.clone(),
         };
         self.listens.push_back(row);
         if self.listens.len() > KEEP_LISTENS {

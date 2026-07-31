@@ -40,13 +40,25 @@ fn authorized(state: &AppState, headers: &HeaderMap) -> Option<Response> {
             "server not configured: NOWPLAYING_TOKEN is not set",
         ));
     }
-    let expected = format!("Token {}", state.token);
-    match headers.get("authorization").and_then(|v| v.to_str().ok()) {
-        Some(value) if value == expected => None,
-        _ => Some(err(
+    let Some(value) = headers.get("authorization").and_then(|v| v.to_str().ok()) else {
+        return Some(err(
             StatusCode::UNAUTHORIZED,
             "invalid authorization token",
-        )),
+        ));
+    };
+    let Some((scheme, key)) = value.split_once(' ') else {
+        return Some(err(
+            StatusCode::UNAUTHORIZED,
+            "invalid authorization token",
+        ));
+    };
+    if scheme.eq_ignore_ascii_case("token") && key == state.token {
+        None
+    } else {
+        Some(err(
+            StatusCode::UNAUTHORIZED,
+            "invalid authorization token",
+        ))
     }
 }
 
@@ -63,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(health))
         .route("/1/submit-listens", axum::routing::post(submit_listens))
+        .route("/1/validate-token", get(validate_token))
         .route("/api/v1/nowplaying", get(nowplaying))
         .route("/api/v1/listens", get(listens))
         .with_state(state);
@@ -81,6 +94,23 @@ async fn main() -> anyhow::Result<()> {
 
 async fn health() -> impl IntoResponse {
     json_response(StatusCode::OK, json!({ "status": "ok" }))
+}
+
+async fn validate_token(
+    AxumState(state): AxumState<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Some(response) = authorized(&state, &headers) {
+        return response;
+    }
+    json_response(
+        StatusCode::OK,
+        json!({
+            "user_name": "nowplaying",
+            "token_valid": true,
+            "valid": true,
+        }),
+    )
 }
 
 #[allow(clippy::significant_drop_tightening)]
@@ -127,12 +157,7 @@ async fn submit_listens(
 }
 
 fn position_of(np: &NowPlaying, now: i64) -> i64 {
-    let frozen = np.position_frozen.unwrap_or(0).max(0);
-    let position = if np.state == "playing" {
-        (now - np.started_at).max(0)
-    } else {
-        frozen
-    };
+    let position = (now - np.started_at).max(0);
     np.duration
         .filter(|d| *d > 0)
         .map_or(position, |duration| position.min(duration))
@@ -140,25 +165,25 @@ fn position_of(np: &NowPlaying, now: i64) -> i64 {
 
 async fn nowplaying(AxumState(state): AxumState<Arc<AppState>>) -> Response {
     let Some(np) = state.state.lock().unwrap().latest_now_playing().cloned() else {
-        return err(StatusCode::NO_CONTENT, "nothing playing");
+        return StatusCode::NO_CONTENT.into_response();
     };
     json_response(
         StatusCode::OK,
         json!({
             "origin": np.origin,
+            "origin_url": np.origin_url,
             "artist": np.artist,
             "title": np.title,
             "album": np.album,
             "length": np.duration,
             "position": position_of(&np, unix_now()),
-            "state": np.state,
             "started_at": np.started_at,
             "updated_at": np.updated_at,
         }),
     )
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 struct LimitQuery {
     limit: Option<usize>,
 }
@@ -179,6 +204,7 @@ async fn listens(
                 "album": r.album,
                 "duration": r.duration,
                 "origin": r.origin,
+                "origin_url": r.origin_url,
             })
         })
         .collect();
