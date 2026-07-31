@@ -1,15 +1,21 @@
-{ rustPlatform, lib }:
+{ rustPlatform, lib, pkg-config, dbus, pname, bin }:
 
 rustPlatform.buildRustPackage {
-  pname = "nowplaying";
+  inherit pname;
   version = "0.1.0";
 
   src = lib.cleanSource ../.;
   cargoLock.lockFile = ../Cargo.lock;
 
+  nativeBuildInputs = [ pkg-config ];
+  buildInputs = [ dbus ];
+
+  cargoBuildFlags = [ "--bin" bin ];
+  cargoInstallFlags = [ "--bin" bin ];
+
   meta = {
-    description = "Self-hosted now playing server (ListenBrainz-compatible API)";
+    description = "nowplaying ${bin}";
     license = lib.licenses.mit;
-    mainProgram = "nowplaying";
+    mainProgram = bin;
   };
 }

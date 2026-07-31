@@ -8,12 +8,21 @@
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
-      package = pkgs.callPackage ./nix/package.nix { };
+      server = pkgs.callPackage ./nix/package.nix {
+        pname = "nowplaying";
+        bin = "nowplaying";
+      };
+      client = pkgs.callPackage ./nix/package.nix {
+        pname = "nowplaying-client";
+        bin = "nowplaying-client";
+      };
     in
     {
       packages.${system} = {
-        default = package;
-        image = pkgs.callPackage ./nix/image.nix { inherit package; };
+        default = server;
+        server = server;
+        client = client;
+        image = pkgs.callPackage ./nix/image.nix { inherit server; };
       };
 
       devShells.${system}.default = pkgs.mkShell {
@@ -23,6 +32,8 @@
           rustfmt
           clippy
           rust-analyzer
+          pkg-config
+          dbus
         ];
       };
     };

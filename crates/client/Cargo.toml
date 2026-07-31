@@ -1,0 +1,17 @@
+[package]
+name = "nowplaying-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Desktop bridge: relays MPRIS playback state to the nowplaying server"
+
+[[bin]]
+name = "nowplaying-client"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+mpris = "2.1"
+nowplaying-proto = { path = "../proto" }
+reqwest = { version = "0.12", default-features = false, features = [ "blocking", "json", "rustls-tls" ] }
+serde_json = "1"

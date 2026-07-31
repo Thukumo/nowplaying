@@ -1,0 +1,9 @@
+[package]
+name = "nowplaying-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared ListenBrainz-compatible payload types for the nowplaying server and bridge"
+
+[dependencies]
+serde = { version = "1", features = [ "derive" ] }

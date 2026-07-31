@@ -1,7 +1,7 @@
+use nowplaying_proto::Listen;
+
 use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use crate::lb::Listen;
 
 const KEEP_LISTENS: usize = 30;
 

@@ -1,4 +1,3 @@
-mod lb;
 mod state;
 
 use std::net::SocketAddr;
@@ -10,10 +9,10 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use nowplaying_proto::SubmitRequest;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::lb::SubmitRequest;
 use crate::state::{unix_now, NowPlaying, State};
 
 struct AppState {

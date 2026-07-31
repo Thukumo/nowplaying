@@ -1,4 +1,4 @@
-{ dockerTools, pkgs, package }:
+{ dockerTools, pkgs, server }:
 
 dockerTools.buildImage {
   name = "nowplaying";
@@ -6,7 +6,7 @@ dockerTools.buildImage {
 
   copyToRoot = pkgs.buildEnv {
     name = "nowplaying-root";
-    paths = [ package ];
+    paths = [ server ];
     pathsToLink = [ "/bin" ];
   };
 

@@ -1,16 +1,15 @@
-[package]
-name = "nowplaying"
+[workspace]
+resolver = "2"
+members = [
+  "crates/proto",
+  "crates/server",
+  "crates/client",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "Self-hosted now playing server with a ListenBrainz-compatible API"
 license = "MIT"
-
-[dependencies]
-anyhow = "1"
-axum = "0.8"
-serde = { version = "1", features = [ "derive" ] }
-serde_json = "1"
-tokio = { version = "1", features = [ "macros", "net", "rt-multi-thread" ] }
 
 [profile.release]
 strip = true
