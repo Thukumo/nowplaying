@@ -1,12 +1,11 @@
-mod db;
 mod lb;
+mod state;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
-use axum::extract::{Query, State};
+use axum::extract::{Query, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -14,19 +13,12 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::db::{Db, NowPlaying};
 use crate::lb::SubmitRequest;
+use crate::state::{unix_now, NowPlaying, State};
 
 struct AppState {
-    db: Db,
+    state: Mutex<State>,
     token: String,
-}
-
-fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
 }
 
 fn json_response(status: StatusCode, body: Value) -> Response {
@@ -61,11 +53,12 @@ fn authorized(state: &AppState, headers: &HeaderMap) -> Option<Response> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let bind = std::env::var("NOWPLAYING_BIND").unwrap_or_else(|_| "[::]:8080".to_string());
-    let db_path = std::env::var("NOWPLAYING_DB").unwrap_or_else(|_| "nowplaying.db".to_string());
     let token = std::env::var("NOWPLAYING_TOKEN").unwrap_or_default();
 
-    let db = Db::open(&db_path).context("open database")?;
-    let state = Arc::new(AppState { db, token });
+    let state = Arc::new(AppState {
+        state: Mutex::new(State::new()),
+        token,
+    });
 
     let app = Router::new()
         .route("/", get(health))
@@ -81,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("cannot bind {addr}"))?;
 
-    println!("nowplaying listening on {addr} (db: {db_path})");
+    println!("nowplaying listening on {addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -91,7 +84,7 @@ async fn health() -> impl IntoResponse {
 }
 
 async fn submit_listens(
-    State(state): State<Arc<AppState>>,
+    AxumState(state): AxumState<Arc<AppState>>,
     headers: HeaderMap,
     body: Option<Json<SubmitRequest>>,
 ) -> Response {
@@ -107,14 +100,21 @@ async fn submit_listens(
             let Some(listen) = request.payload.first() else {
                 return err(StatusCode::BAD_REQUEST, "playing_now payload is empty");
             };
-            state.db.set_now_playing(listen, unix_now());
+            state
+                .state
+                .lock()
+                .unwrap()
+                .set_now_playing(listen, unix_now());
             ok()
         }
         "single" | "import" => {
             if request.payload.is_empty() {
                 return err(StatusCode::BAD_REQUEST, "payload is empty");
             }
-            state.db.insert_listens(&request.payload, unix_now());
+            let mut state = state.state.lock().unwrap();
+            for listen in &request.payload {
+                state.insert_listen(listen, unix_now());
+            }
             ok()
         }
         other => err(
@@ -138,8 +138,8 @@ fn position_of(np: &NowPlaying, now: i64) -> i64 {
     }
 }
 
-async fn nowplaying(State(state): State<Arc<AppState>>) -> Response {
-    let Some(np) = state.db.latest_now_playing() else {
+async fn nowplaying(AxumState(state): AxumState<Arc<AppState>>) -> Response {
+    let Some(np) = state.state.lock().unwrap().latest_now_playing().cloned() else {
         return err(StatusCode::NO_CONTENT, "nothing playing");
     };
     json_response(
@@ -160,15 +160,15 @@ async fn nowplaying(State(state): State<Arc<AppState>>) -> Response {
 
 #[derive(Debug, Deserialize, Default)]
 struct LimitQuery {
-    limit: Option<u32>,
+    limit: Option<usize>,
 }
 
 async fn listens(
-    State(state): State<Arc<AppState>>,
+    AxumState(state): AxumState<Arc<AppState>>,
     Query(query): Query<LimitQuery>,
 ) -> Response {
     let limit = query.limit.unwrap_or(30).clamp(1, 100);
-    let rows = state.db.list_listens(limit);
+    let rows = state.state.lock().unwrap().list_listens(limit);
     let listens: Vec<Value> = rows
         .into_iter()
         .map(|r| {
