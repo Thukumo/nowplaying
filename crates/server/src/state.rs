@@ -15,6 +15,12 @@ pub fn unix_now() -> i64 {
     .unwrap_or(i64::MAX)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayStatus {
+    Playing,
+    Paused,
+}
+
 #[derive(Debug, Clone)]
 pub struct NowPlaying {
     pub origin: String,
@@ -23,9 +29,9 @@ pub struct NowPlaying {
     pub title: String,
     pub album: Option<String>,
     pub duration: Option<i64>,
-    pub started_at: i64,
+    pub status: PlayStatus,
+    /// When this report was received; used to age out stale reports.
     pub updated_at: i64,
-    pub paused_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,68 +58,33 @@ impl State {
         }
     }
 
-    pub fn set_now_playing(&mut self, listen: &Listen, now: i64) {
-        let origin = listen.origin();
-        let artist = listen.track_metadata.artist_name.clone();
-        let title = listen.track_metadata.track_name.clone();
-        let album = listen.track_metadata.release_name.clone();
-        let duration = listen.track_metadata.additional_info.duration_seconds();
+    /// Store the latest report as the current now playing state.
+    /// The server keeps no history or extrapolation anchors of its own;
+    /// freshness and position accuracy are the reporting client's job.
+    pub fn report_now_playing(&mut self, listen: &Listen, now: i64) {
+        if listen.track_metadata.additional_info.stopped.unwrap_or(false) {
+            self.now_playing = None;
+            return;
+        }
         let paused = listen
             .track_metadata
             .additional_info
             .paused
             .unwrap_or(false);
-        let stopped = listen
-            .track_metadata
-            .additional_info
-            .stopped
-            .unwrap_or(false);
-        let position = listen.track_metadata.additional_info.position;
-
-        let same_track = self.now_playing.as_ref().is_some_and(|np| {
-            np.origin == origin && np.artist == artist && np.title == title
+        self.now_playing = Some(NowPlaying {
+            origin: listen.origin(),
+            origin_url: listen.track_metadata.additional_info.origin_url.clone(),
+            artist: listen.track_metadata.artist_name.clone(),
+            title: listen.track_metadata.track_name.clone(),
+            album: listen.track_metadata.release_name.clone(),
+            duration: listen.track_metadata.additional_info.duration_seconds(),
+            status: if paused {
+                PlayStatus::Paused
+            } else {
+                PlayStatus::Playing
+            },
+            updated_at: now,
         });
-
-        if stopped {
-            if same_track {
-                self.now_playing = None;
-            }
-            return;
-        }
-
-        if same_track {
-            let np = self.now_playing.as_mut().unwrap();
-            np.origin_url
-                .clone_from(&listen.track_metadata.additional_info.origin_url);
-            np.album.clone_from(&listen.track_metadata.release_name);
-            np.duration = listen.track_metadata.additional_info.duration_seconds();
-            np.updated_at = now;
-            match (position, np.paused_at.take(), paused) {
-                (Some(pos), _, _) => {
-                    np.started_at = now - pos.max(0);
-                    np.paused_at = paused.then_some(now);
-                }
-                (None, Some(paused_at), false) => {
-                    np.started_at += now - paused_at;
-                }
-                (None, _, true) => {
-                    np.paused_at = Some(now);
-                }
-                (None, None, false) => {}
-            }
-        } else {
-            self.now_playing = Some(NowPlaying {
-                origin,
-                origin_url: listen.track_metadata.additional_info.origin_url.clone(),
-                artist,
-                title,
-                album,
-                duration,
-                started_at: now,
-                updated_at: now,
-                paused_at: paused.then_some(now),
-            });
-        }
     }
 
     pub fn insert_listen(&mut self, listen: &Listen, now: i64) {

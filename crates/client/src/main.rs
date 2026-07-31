@@ -8,7 +8,6 @@ struct Config {
     server: String,
     token: String,
     poll_seconds: u64,
-    heartbeat_seconds: i64,
     min_play_seconds: i64,
 }
 
@@ -21,7 +20,6 @@ impl Config {
             server,
             token,
             poll_seconds: env_parse("NOWPLAYING_POLL_SECONDS").unwrap_or(5),
-            heartbeat_seconds: env_parse("NOWPLAYING_HEARTBEAT_SECONDS").unwrap_or(30),
             min_play_seconds: env_parse("NOWPLAYING_MIN_PLAY_SECONDS").unwrap_or(15),
         })
     }
@@ -46,7 +44,6 @@ struct PlayerInfo {
     album: Option<String>,
     length_secs: Option<i64>,
     url: Option<String>,
-    position_secs: i64,
 }
 
 impl PlayerInfo {
@@ -63,7 +60,6 @@ impl PlayerInfo {
                 origin_url: self.url.clone(),
                 paused,
                 stopped: None,
-                position: Some(self.position_secs),
             },
         }
     }
@@ -72,9 +68,6 @@ impl PlayerInfo {
 fn read_player(player: &Player) -> Result<PlayerInfo> {
     let player_name = player.bus_name_trimmed().to_string();
     let status = player.get_playback_status().context("get_playback_status")?;
-    let position_us = player
-        .get_position()
-        .map_or(0, |d| i64::try_from(d.as_micros()).unwrap_or(i64::MAX));
     let meta = player.get_metadata().unwrap_or_default();
     let artist = meta.artists().unwrap_or_default().join(", ");
     let title = meta.title().unwrap_or_default().to_string();
@@ -91,7 +84,6 @@ fn read_player(player: &Player) -> Result<PlayerInfo> {
         album,
         length_secs,
         url,
-        position_secs: position_us / 1_000_000,
     })
 }
 
@@ -122,6 +114,18 @@ impl Client {
                 req.listen_type, self.config.server
             ),
         }
+    }
+
+    fn post_playing(&self, info: &PlayerInfo) {
+        self.post_state(info, None, false);
+    }
+
+    fn post_paused(&self, info: &PlayerInfo) {
+        self.post_state(info, Some(true), false);
+    }
+
+    fn post_stopped(&self, info: &PlayerInfo) {
+        self.post_state(info, None, true);
     }
 
     fn post_state(&self, info: &PlayerInfo, paused: Option<bool>, stopped: bool) {
@@ -155,14 +159,10 @@ struct BridgeState {
     started_at: i64,
     segment_start: i64,
     played: i64,
-    last_heartbeat: i64,
 }
 
 impl BridgeState {
-    fn finalize(&self, client: &Client, now: i64) {
-        let Some(track) = &self.track else {
-            return;
-        };
+    fn finalize(&self, client: &Client, track: &PlayerInfo, now: i64) {
         let active = if track.status == PlaybackStatus::Playing {
             now - self.segment_start
         } else {
@@ -175,11 +175,9 @@ impl BridgeState {
 
     fn on_player(&mut self, client: &Client, info: &PlayerInfo, now: i64) {
         if info.status == PlaybackStatus::Stopped {
-            if self.track.as_ref().is_some_and(|t| t.player == info.player) {
-                self.finalize(client, now);
-                let last = self.track.clone().unwrap();
-                client.post_state(&last, None, true);
-                self.track = None;
+            if let Some(last) = self.track.take() {
+                self.finalize(client, &last, now);
+                client.post_stopped(&last);
             }
             return;
         }
@@ -194,35 +192,40 @@ impl BridgeState {
             .is_some_and(|t| t.player == info.player && t.title == info.title);
 
         if !same_track {
-            self.finalize(client, now);
-            let paused = (info.status == PlaybackStatus::Paused).then_some(true);
-            client.post_state(info, paused, false);
+            if info.status == PlaybackStatus::Paused {
+                // a paused player we are not tracking must not resurrect as a
+                // new now playing; end the current session instead
+                if let Some(last) = self.track.take() {
+                    self.finalize(client, &last, now);
+                    client.post_stopped(&last);
+                }
+                return;
+            }
+            if let Some(last) = self.track.take() {
+                self.finalize(client, &last, now);
+            }
+            client.post_playing(info);
             self.track = Some(info.clone());
             self.started_at = now;
             self.segment_start = now;
             self.played = 0;
-            self.last_heartbeat = now;
             return;
         }
 
-        let prev_status = self.track.as_ref().unwrap().status;
-        match info.status {
-            PlaybackStatus::Paused if prev_status == PlaybackStatus::Playing => {
+        let Some(track) = self.track.as_mut() else {
+            return;
+        };
+        match (info.status, track.status) {
+            (PlaybackStatus::Paused, PlaybackStatus::Playing) => {
                 self.played += now - self.segment_start;
                 self.segment_start = now;
-                self.track.as_mut().unwrap().status = PlaybackStatus::Paused;
-                client.post_state(info, Some(true), false);
+                track.status = PlaybackStatus::Paused;
+                client.post_paused(info);
             }
-            PlaybackStatus::Playing if prev_status == PlaybackStatus::Paused => {
+            (PlaybackStatus::Playing, PlaybackStatus::Paused) => {
                 self.segment_start = now;
-                self.track.as_mut().unwrap().status = PlaybackStatus::Playing;
-                client.post_state(info, None, false);
-            }
-            PlaybackStatus::Playing
-                if now - self.last_heartbeat >= client.config.heartbeat_seconds =>
-            {
-                self.last_heartbeat = now;
-                client.post_state(info, None, false);
+                track.status = PlaybackStatus::Playing;
+                client.post_playing(info);
             }
             _ => {}
         }
@@ -230,10 +233,22 @@ impl BridgeState {
 
     fn on_no_player(&mut self, client: &Client, now: i64) {
         if let Some(track) = self.track.take() {
-            self.finalize(client, now);
-            client.post_state(&track, None, true);
+            self.finalize(client, &track, now);
+            client.post_stopped(&track);
         }
     }
+
+    fn tracked_player(&self) -> Option<&str> {
+        self.track.as_ref().map(|t| t.player.as_str())
+    }
+}
+
+fn find_player_by_bus_name(finder: &PlayerFinder, name: &str) -> Option<Player> {
+    let players = finder.iter_players().ok()?;
+    players
+        .into_iter()
+        .filter_map(Result::ok)
+        .find(|p| p.bus_name_trimmed() == name)
 }
 
 fn main() -> Result<()> {
@@ -251,13 +266,31 @@ fn main() -> Result<()> {
     loop {
         std::thread::sleep(Duration::from_secs(client.config.poll_seconds));
         let now = unix_now();
-        match finder.find_active() {
-            Ok(player) => match read_player(&player) {
+        // While everything is paused, keep reporting the player we were
+        // already tracking instead of flipping to an arbitrary paused one
+        // (find_active prefers the alphabetically first paused player).
+        let preferred = state
+            .tracked_player()
+            .and_then(|name| find_player_by_bus_name(&finder, name));
+
+        let player = match finder.find_active() {
+            Ok(player) => match player.get_playback_status() {
+                Ok(PlaybackStatus::Paused) => preferred.or(Some(player)),
+                _ => Some(player),
+            },
+            Err(mpris::FindingError::NoPlayerFound) => None,
+            Err(e) => {
+                eprintln!("nowplaying: failed to find player: {e:#}");
+                continue;
+            }
+        };
+
+        match player {
+            Some(player) => match read_player(&player) {
                 Ok(info) => state.on_player(&client, &info, now),
                 Err(e) => eprintln!("nowplaying: failed to read player: {e:#}"),
             },
-            Err(mpris::FindingError::NoPlayerFound) => state.on_no_player(&client, now),
-            Err(e) => eprintln!("nowplaying: failed to find player: {e:#}"),
+            None => state.on_no_player(&client, now),
         }
     }
 }
