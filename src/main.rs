@@ -83,6 +83,7 @@ async fn health() -> impl IntoResponse {
     json_response(StatusCode::OK, json!({ "status": "ok" }))
 }
 
+#[allow(clippy::significant_drop_tightening)]
 async fn submit_listens(
     AxumState(state): AxumState<Arc<AppState>>,
     headers: HeaderMap,
@@ -111,9 +112,10 @@ async fn submit_listens(
             if request.payload.is_empty() {
                 return err(StatusCode::BAD_REQUEST, "payload is empty");
             }
+            let now = unix_now();
             let mut state = state.state.lock().unwrap();
             for listen in &request.payload {
-                state.insert_listen(listen, unix_now());
+                state.insert_listen(listen, now);
             }
             ok()
         }
@@ -131,11 +133,9 @@ fn position_of(np: &NowPlaying, now: i64) -> i64 {
     } else {
         frozen
     };
-    if let Some(duration) = np.duration.filter(|d| *d > 0) {
-        position.min(duration)
-    } else {
-        position
-    }
+    np.duration
+        .filter(|d| *d > 0)
+        .map_or(position, |duration| position.min(duration))
 }
 
 async fn nowplaying(AxumState(state): AxumState<Arc<AppState>>) -> Response {

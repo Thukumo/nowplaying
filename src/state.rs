@@ -6,10 +6,13 @@ use crate::lb::Listen;
 const KEEP_LISTENS: usize = 30;
 
 pub fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap_or(i64::MAX)
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +44,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             listens: VecDeque::new(),
             now_playing: None,
@@ -106,7 +109,7 @@ impl State {
         }
     }
 
-    pub fn latest_now_playing(&self) -> Option<&NowPlaying> {
+    pub const fn latest_now_playing(&self) -> Option<&NowPlaying> {
         self.now_playing.as_ref()
     }
 

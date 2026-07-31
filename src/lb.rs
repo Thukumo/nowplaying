@@ -38,15 +38,15 @@ pub enum Artist {
 
 impl Default for Artist {
     fn default() -> Self {
-        Artist::Single(String::new())
+        Self::Single(String::new())
     }
 }
 
 impl Artist {
     pub fn as_string(&self) -> String {
         match self {
-            Artist::Single(s) => s.clone(),
-            Artist::Multi(v) => v.join(" & "),
+            Self::Single(s) => s.clone(),
+            Self::Multi(v) => v.join(" & "),
         }
     }
 }
