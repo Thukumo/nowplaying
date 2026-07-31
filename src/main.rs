@@ -19,6 +19,7 @@ use crate::state::{unix_now, NowPlaying, State};
 struct AppState {
     state: Mutex<State>,
     token: String,
+    clear_slack_secs: i64,
 }
 
 fn json_response(status: StatusCode, body: Value) -> Response {
@@ -66,10 +67,15 @@ fn authorized(state: &AppState, headers: &HeaderMap) -> Option<Response> {
 async fn main() -> anyhow::Result<()> {
     let bind = std::env::var("NOWPLAYING_BIND").unwrap_or_else(|_| "[::]:8080".to_string());
     let token = std::env::var("NOWPLAYING_TOKEN").unwrap_or_default();
+    let clear_slack_secs = std::env::var("NOWPLAYING_CLEAR_SLACK_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
 
     let state = Arc::new(AppState {
         state: Mutex::new(State::new()),
         token,
+        clear_slack_secs,
     });
 
     let app = Router::new()
@@ -157,16 +163,31 @@ async fn submit_listens(
 }
 
 fn position_of(np: &NowPlaying, now: i64) -> i64 {
-    let position = (now - np.started_at).max(0);
+    let position = np
+        .paused_at
+        .map_or(now - np.started_at, |paused_at| paused_at - np.started_at)
+        .max(0);
     np.duration
         .filter(|d| *d > 0)
         .map_or(position, |duration| position.min(duration))
 }
 
+fn is_expired(np: &NowPlaying, now: i64, slack_secs: i64) -> bool {
+    np.paused_at.is_none()
+        && np
+            .duration
+            .is_some_and(|d| d > 0 && now - np.started_at > d + slack_secs)
+}
+
 async fn nowplaying(AxumState(state): AxumState<Arc<AppState>>) -> Response {
+    let now = unix_now();
+    let slack_secs = state.clear_slack_secs;
     let Some(np) = state.state.lock().unwrap().latest_now_playing().cloned() else {
         return StatusCode::NO_CONTENT.into_response();
     };
+    if is_expired(&np, now, slack_secs) {
+        return StatusCode::NO_CONTENT.into_response();
+    }
     json_response(
         StatusCode::OK,
         json!({
@@ -176,7 +197,8 @@ async fn nowplaying(AxumState(state): AxumState<Arc<AppState>>) -> Response {
             "title": np.title,
             "album": np.album,
             "length": np.duration,
-            "position": position_of(&np, unix_now()),
+            "position": position_of(&np, now),
+            "paused": np.paused_at.is_some(),
             "started_at": np.started_at,
             "updated_at": np.updated_at,
         }),

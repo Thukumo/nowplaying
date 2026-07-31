@@ -30,6 +30,9 @@ pub struct AdditionalInfo {
     pub music_service_name: Option<String>,
     pub media_player: Option<String>,
     pub origin_url: Option<String>,
+    pub paused: Option<bool>,
+    pub stopped: Option<bool>,
+    pub position: Option<i64>,
 }
 
 impl AdditionalInfo {
