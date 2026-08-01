@@ -11,6 +11,7 @@ use topcoat::{
 struct App {
     client: reqwest::Client,
     api_url: String,
+    listens_limit: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,7 +54,7 @@ async fn fetch_nowplaying(app: &App) -> Result<Option<NowPlaying>> {
 }
 
 async fn fetch_listens(app: &App) -> Result<Vec<Listen>> {
-    let url = format!("{}/api/v1/listens?limit=20", app.api_url);
+    let url = format!("{}/api/v1/listens?limit={}", app.api_url, app.listens_limit);
     let resp = app.client.get(&url).send().await?;
     let body: Listens = resp.json().await?;
     Ok(body.listens)
@@ -90,6 +91,10 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 async fn main() {
     let api_url = std::env::var("NOWPLAYING_API")
         .unwrap_or_else(|_| "https://api-nowplaying.tsukumo.f5.si".to_string());
+    let listens_limit = std::env::var("NOWPLAYING_LISTENS_LIMIT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(25);
     let app = App {
         client: reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(3))
@@ -97,6 +102,7 @@ async fn main() {
             .build()
             .unwrap(),
         api_url,
+        listens_limit,
     };
     topcoat::start(Router::builder().discover().app_context(app).build())
         .await

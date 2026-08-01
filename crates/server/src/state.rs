@@ -3,7 +3,7 @@ use nowplaying_proto::Listen;
 use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const KEEP_LISTENS: usize = 30;
+const KEEP_LISTENS: usize = 100;
 
 pub fn unix_now() -> i64 {
     i64::try_from(
