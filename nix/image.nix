@@ -1,19 +1,16 @@
-{ dockerTools, pkgs, server }:
+{ dockerTools, pkgs, pkg, cmd, name }:
 
 dockerTools.buildImage {
-  name = "nowplaying";
+  inherit name;
   tag = "latest";
 
   copyToRoot = pkgs.buildEnv {
-    name = "nowplaying-root";
-    paths = [ server ];
+    name = "${name}-root";
+    paths = [ pkg ];
     pathsToLink = [ "/bin" ];
   };
 
   config = {
-    Cmd = [ "/bin/nowplaying" ];
-    ExposedPorts = {
-      "8080/tcp" = { };
-    };
+    Cmd = [ cmd ];
   };
 }
