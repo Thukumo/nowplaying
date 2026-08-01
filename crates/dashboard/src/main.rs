@@ -37,6 +37,7 @@ struct Listen {
     title: String,
     album: Option<String>,
     duration: Option<i64>,
+    played_seconds: Option<i64>,
     origin: String,
     origin_url: Option<String>,
 }
@@ -157,7 +158,11 @@ async fn home(cx: &Cx) -> Result {
                 <ul>
                     for l in listens {
                         <li>
-                            (fmt_jst(l.listened_at)) " | "
+                            (fmt_jst(l.listened_at))
+                            if let Some(played) = l.played_seconds {
+                                "〜" (fmt_jst(l.listened_at + played))
+                            }
+                            " | "
                             if let Some(url) = l.origin_url.as_ref() {
                                 <a href=(url) target="_blank" rel="noopener noreferrer">
                                     (l.artist) " - " (l.title)

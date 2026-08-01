@@ -138,8 +138,21 @@ async fn submit_listens(
             }
             let now = unix_now();
             let mut state = state.state.lock().unwrap();
+            // how long the current now playing occupied the slot, measured
+            // from its first report until this scrobble
+            let played_seconds = if request.listen_type == "single" {
+                let listen = &request.payload[0];
+                state.latest_now_playing().and_then(|np| {
+                    (np.origin == listen.origin()
+                        && np.artist == listen.track_metadata.artist_name
+                        && np.title == listen.track_metadata.track_name)
+                        .then(|| (now - np.started_at).max(0))
+                })
+            } else {
+                None
+            };
             for listen in &request.payload {
-                state.insert_listen(listen, now);
+                state.insert_listen(listen, now, played_seconds);
             }
             ok()
         }
@@ -164,6 +177,7 @@ async fn nowplaying(AxumState(state): AxumState<Arc<AppState>>) -> Response {
             "album": np.album,
             "length": np.duration,
             "paused": np.status == PlayStatus::Paused,
+            "started_at": np.started_at,
             "updated_at": np.updated_at,
         }),
     )
@@ -189,6 +203,7 @@ async fn listens(
                 "title": r.title,
                 "album": r.album,
                 "duration": r.duration,
+                "played_seconds": r.played_seconds,
                 "origin": r.origin,
                 "origin_url": r.origin_url,
             })
