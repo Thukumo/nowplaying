@@ -1,0 +1,17 @@
+[package]
+name = "nowplaying-dashboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Web dashboard for the nowplaying server"
+
+[[bin]]
+name = "nowplaying-dashboard"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = [ "json", "rustls-tls" ] }
+serde = { version = "1", features = [ "derive" ] }
+tokio = { version = "1", features = [ "rt-multi-thread", "macros" ] }
+topcoat = "0.5"

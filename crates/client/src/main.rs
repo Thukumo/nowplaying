@@ -215,6 +215,13 @@ impl BridgeState {
         let Some(track) = self.track.as_mut() else {
             return;
         };
+        // some players set origin_url (and friends) a moment after the track
+        // starts; refresh the metadata we store, and re-report once the url
+        // shows up so the server eventually has it
+        let url_appeared = track.url.is_none() && info.url.is_some();
+        track.url.clone_from(&info.url);
+        track.album.clone_from(&info.album);
+        track.length_secs = info.length_secs;
         match (info.status, track.status) {
             (PlaybackStatus::Paused, PlaybackStatus::Playing) => {
                 self.played += now - self.segment_start;
@@ -228,6 +235,13 @@ impl BridgeState {
                 client.post_playing(info);
             }
             _ => {}
+        }
+        if url_appeared {
+            if info.status == PlaybackStatus::Paused {
+                client.post_paused(info);
+            } else {
+                client.post_playing(info);
+            }
         }
     }
 
