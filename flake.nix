@@ -1,7 +1,7 @@
 {
   description = "Self-hosted now playing server with a ListenBrainz-compatible API";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/e8273b29fe1390ec8d4603f2477357555291432e";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
   outputs =
     { self, nixpkgs }:
