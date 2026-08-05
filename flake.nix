@@ -9,14 +9,18 @@
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
       server = pkgs.callPackage ./nix/package.nix {
+        rustPlatform = pkgs.pkgsStatic.rustPlatform;
         pname = "nowplaying";
         bin = "nowplaying";
       };
       client = pkgs.callPackage ./nix/package.nix {
         pname = "nowplaying-client";
         bin = "nowplaying-client";
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [ pkgs.dbus ];
       };
       dashboard = pkgs.callPackage ./nix/package.nix {
+        rustPlatform = pkgs.pkgsStatic.rustPlatform;
         pname = "nowplaying-dashboard";
         bin = "nowplaying-dashboard";
       };
@@ -50,5 +54,7 @@
           dbus
         ];
       };
+
+      formatter.${system} = nixpkgs.legacyPackages.${system}.nixfmt-tree;
     };
 }

@@ -1,4 +1,10 @@
-{ dockerTools, pkgs, pkg, cmd, name }:
+{
+  dockerTools,
+  pkgs,
+  pkg,
+  cmd,
+  name,
+}:
 
 dockerTools.buildImage {
   inherit name;

@@ -1,21 +1,30 @@
-{ rustPlatform, lib, pkg-config, dbus, pname, bin }:
+{
+  rustPlatform,
+  lib,
+  pname,
+  bin,
+  nativeBuildInputs ? [ ],
+  buildInputs ? [ ],
+}:
 
-rustPlatform.buildRustPackage {
-  inherit pname;
+rustPlatform.buildRustPackage (rec {
+  inherit pname nativeBuildInputs buildInputs;
   version = "0.1.0";
 
   src = lib.cleanSource ../.;
   cargoLock.lockFile = ../Cargo.lock;
 
-  nativeBuildInputs = [ pkg-config ];
-  buildInputs = [ dbus ];
-
-  cargoBuildFlags = [ "--bin" bin ];
-  cargoInstallFlags = [ "--bin" bin ];
+  binFlags = [
+    "--bin"
+    bin
+  ];
+  cargoBuildFlags = binFlags;
+  cargoTestFlags = binFlags;
+  cargoInstallFlags = binFlags;
 
   meta = {
     description = "nowplaying ${bin}";
     license = lib.licenses.mit;
     mainProgram = bin;
   };
-}
+})
