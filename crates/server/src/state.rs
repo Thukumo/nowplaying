@@ -1,7 +1,13 @@
 use nowplaying_proto::Listen;
 
 use std::collections::VecDeque;
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::Context;
+use serde::{Deserialize, Serialize};
 
 const KEEP_LISTENS: usize = 100;
 
@@ -37,7 +43,7 @@ pub struct NowPlaying {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListenRow {
     pub listened_at: i64,
     pub artist: String,
@@ -54,14 +60,53 @@ pub struct ListenRow {
 pub struct State {
     listens: VecDeque<ListenRow>,
     now_playing: Option<NowPlaying>,
+    log: Option<File>,
 }
 
 impl State {
+    /// In-memory only state; the history is capped at `KEEP_LISTENS` rows.
     pub const fn new() -> Self {
         Self {
             listens: VecDeque::new(),
             now_playing: None,
+            log: None,
         }
+    }
+
+    /// State backed by a JSONL history file: every stored listen is appended
+    /// to the file, while the in-memory history served by the API is capped
+    /// at `KEEP_LISTENS` rows. Malformed lines are skipped on load.
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let mut listens = match File::open(path) {
+            Ok(file) => BufReader::new(file)
+                .lines()
+                .collect::<Result<Vec<_>, _>>()
+                .with_context(|| format!("cannot read {}", path.display()))?
+                .iter()
+                .filter_map(|line| {
+                    serde_json::from_str(line)
+                        .inspect_err(|e| {
+                            eprintln!("nowplaying: skipping malformed history line: {e}");
+                        })
+                        .ok()
+                })
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => VecDeque::new(),
+            Err(e) => return Err(e).with_context(|| format!("cannot open {}", path.display())),
+        };
+        if listens.len() > KEEP_LISTENS {
+            listens.drain(..listens.len() - KEEP_LISTENS);
+        }
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("cannot open {} for appending", path.display()))?;
+        Ok(Self {
+            listens,
+            now_playing: None,
+            log: Some(log),
+        })
     }
 
     /// Store the latest report as the current now playing state.
@@ -115,6 +160,17 @@ impl State {
             origin: listen.origin(),
             origin_url: listen.track_metadata.additional_info.origin_url.clone(),
         };
+        if let Some(log) = &mut self.log {
+            match serde_json::to_string(&row) {
+                Ok(mut line) => {
+                    line.push('\n');
+                    if let Err(e) = log.write_all(line.as_bytes()) {
+                        eprintln!("nowplaying: failed to append history: {e}");
+                    }
+                }
+                Err(e) => eprintln!("nowplaying: failed to serialize history row: {e}"),
+            }
+        }
         self.listens.push_back(row);
         if self.listens.len() > KEEP_LISTENS {
             self.listens.pop_front();

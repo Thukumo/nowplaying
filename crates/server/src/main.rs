@@ -1,6 +1,7 @@
 mod state;
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
@@ -60,9 +61,16 @@ fn authorized(state: &AppState, headers: &HeaderMap) -> Option<Response> {
 async fn main() -> anyhow::Result<()> {
     let bind = std::env::var("NOWPLAYING_BIND").unwrap_or_else(|_| "[::]:8080".to_string());
     let token = std::env::var("NOWPLAYING_TOKEN").unwrap_or_default();
+    let data = std::env::var("NOWPLAYING_DATA")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
 
     let state = Arc::new(AppState {
-        state: Mutex::new(State::new()),
+        state: Mutex::new(match &data {
+            Some(path) => State::load(path)?,
+            None => State::new(),
+        }),
         token,
     });
 
@@ -82,6 +90,9 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("cannot bind {addr}"))?;
 
     println!("nowplaying listening on {addr}");
+    if let Some(path) = &data {
+        println!("nowplaying history: {}", path.display());
+    }
     axum::serve(listener, app).await?;
     Ok(())
 }
