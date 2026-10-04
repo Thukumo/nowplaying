@@ -7,3 +7,6 @@ description = "Shared ListenBrainz-compatible payload types for the nowplaying s
 
 [dependencies]
 serde = { version = "1", features = [ "derive" ] }
+
+[lints]
+workspace = true

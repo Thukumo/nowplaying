@@ -12,6 +12,10 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+[workspace.lints.clippy]
+pedantic = "warn"
+nursery = "warn"
+
 [profile.release]
 strip = true
 lto = true
